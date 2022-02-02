@@ -1,124 +1,146 @@
 const moment = require("moment");
 // CREDENTIALS
 const CONFIG = require("./config.json");
+const request = require("request");
 
-// NOTION SDK CONFIG
-const { Client } = require("@notionhq/client");
+// Post fills for TV to process
+async function postFills(fill_data) {
+  let tradeData = JSON.parse(fill_data);
 
-const notion = new Client({
-  auth: CONFIG.NOTION_TOKEN,
-});
+  // Proces Data (datetime iso, symbol, qty,price,comission, transfee,
+  let processedData = {};
+  processedData["allow_duplicates"] = "false";
+  processedData["overlay_comissions"] = "true";
+  processedData["tags"] = ["obliquity"];
+  let key = "executions";
+  processedData[key] = [];
 
-const databaseId = CONFIG.NOTION_DB_ID;
-
-let trades = [];
-
-///////////////////////////////
-//  COMPUTE + POST TO NOTION //
-///////////////////////////////
-
-async function addItem(id, symbol, volume, pnl, time) {
-  try {
-    // Trade alredy sent?
-    const dup = await notion.databases.query({
-      database_id: databaseId,
-      filter: {
-        or: [
-          {
-            property: "Trade ID",
-            number: {
-              equals: id,
-            },
-          },
-        ],
-      },
-    });
-    // If dup promise returns empty result, post trade.
-    if (dup.results < 1) {
-      const response = await notion.pages.create({
-        parent: { database_id: databaseId },
-        properties: {
-          title: {
-            title: [
-              {
-                text: {
-                  content: symbol,
-                },
-              },
-            ],
-          },
-          Date: {
-            date: {
-              start: time,
-            },
-          },
-          Qty: {
-            number: Number(volume),
-          },
-          PnL: {
-            number: Number(pnl),
-          },
-          "Trade ID": {
-            number: Number(id),
-          },
-          "Tradervue": {
-            url: "https://tradervue.com/trades/" + id
-          }
-        },
-      });
+  for (i = 0; i < Object.keys(tradeData).length; i++) {
+    let qty = 0;
+    if (tradeData[i].JSON.BuySell > 1) {
+      qty = -1 * tradeData[i].JSON.OrderFilledQuantity;
+    } else {
+      qty = tradeData[i].JSON.OrderFilledQuantity;
     }
 
-    
-    //console.log(response);
-    //console.log("Success! Entry added.");
-  } catch (error) {
-    console.error(error.body);
+    let dt = new Date(tradeData[i].JSON.DataDateTime / 1000);
+
+    dt.setHours(dt.getHours() - 4);
+
+    let symbol = "ERR";
+
+    //MES
+    if (tradeData[i].JSON.Symbol.toString().includes("MES")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 4) + "1";
+    }
+    //ES
+    if (
+      tradeData[i].JSON.Symbol.toString().includes("ES") &&
+      !tradeData[i].JSON.Symbol.toString().includes("MES")
+    ) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+    //CL
+    if (tradeData[i].JSON.Symbol.toString().includes("CL")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+    //RTY
+    if (tradeData[i].JSON.Symbol.toString().includes("RTY")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 4) + "1";
+    }
+    //M2K
+    if (tradeData[i].JSON.Symbol.toString().includes("M2K")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 4) + "1";
+    }
+    // MNQ
+    if (tradeData[i].JSON.Symbol.toString().includes("MNQ")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 4) + "1";
+    }
+    // MNQ
+    if (
+      tradeData[i].JSON.Symbol.toString().includes("NQ") &&
+      !tradeData[i].JSON.Symbol.toString().includes("MNQ")
+    ) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+    // ZNM21_FUT_CBOT
+    if (tradeData[i].JSON.Symbol.toString().includes("ZN")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+    // 6EM21_FUT_CME
+    if (tradeData[i].JSON.Symbol.toString().includes("6E")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+    //MBTK21_FUT_CME
+    if (tradeData[i].JSON.Symbol.toString().includes("MBT")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 4) + "1";
+    }
+    //ZSN21_FUT_CBOT
+    if (tradeData[i].JSON.Symbol.toString().includes("ZS")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+    // YMU21_FUT_CBOT
+    if (tradeData[i].JSON.Symbol.toString().includes("YM")) {
+      symbol = tradeData[i].JSON.Symbol.toString().substring(0, 3) + "1";
+    }
+
+    let execution = {
+      datetime: dt,
+      symbol: symbol,
+      quantity: qty.toString(),
+      price: (tradeData[i].JSON.FillPrice / 100).toString(),
+      option: "",
+      commission: "0.00",
+      transfee: "0.00",
+      ecnfee: "0.00",
+    };
+
+    processedData[key].push(execution);
   }
+
+  const options = {
+    method: "POST",
+    url: "https://www.tradervue.com/api/v1/imports",
+    headers: {
+      Accept: "application/json",
+      "User-Agent": CONFIG.TRADERVUE_USERNAME,
+      "Content-type": "application/json",
+      Authorization:
+        "Basic " +
+        Buffer.from(
+          CONFIG.TRADERVUE_USERNAME + ":" + CONFIG.TRADERVUE_PASSWORD
+        ).toString("base64"),
+    },
+    body: processedData,
+    json: true,
+  };
+
+  request(options, function (error, response, body) {
+    if (error) throw new Error(error);
+
+    console.log(body);
+  });
 }
 
-/////////////////////////
-//      GET FILLS      //
-/////////////////////////
-//    1 Day History    //
-/////////////////////////
-const fetch = require("node-fetch");
-const today = moment().format("MM%2FDD%2FYY");
-let url = "https://www.tradervue.com/api/v1/trades?startdate=" + today;
+//////////////////////
+// GET SIERRA FILLS //
+//////////////////////
 
-let options = {
-  method: "GET",
-  headers: {
-    Accept: "application/json",
-    "User-Agent": CONFIG.TRADERVUE_USERNAME,
-    Authorization:
-      "Basic " +
-      Buffer.from(
-        CONFIG.TRADERVUE_USERNAME + ":" + CONFIG.TRADERVUE_PASSWORD
-      ).toString("base64"),
+const options = {
+  method: "POST",
+  url: "https://www.sierrachart.com/API.php",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  form: {
+    AdminUsername: CONFIG.SIERRA_FILL_USERNAME,
+    AdminPassword: CONFIG.SIERRA_FILL_PASSWORD,
+    UserSCUsername: CONFIG.SIERRA_MAIN_USERNAME,
+    Service: "GetTradeOrderFills",
+    StartDateTimeInMicroSecondsUTC:
+      moment().subtract(1, "days").unix() * 1000000,
   },
 };
 
-fetch(url, options)
-  .then((res) => res.json())
-  .then((data) => {
-    // Iterate trades and
-    for (i = 0; i < Object.values(data.trades).length; i++) {
-      /*trades.push({
-        id: data.trades[i].id,
-        symbol: data.trades[i].symbol,
-        volume: data.trades[i].volume,
-        pnl: data.trades[i].native_pl,
-        time: data.trades[i].end_datetime,
-      })*/
-      addItem(
-        data.trades[i].id,
-        data.trades[i].symbol,
-        data.trades[i].volume,
-        data.trades[i].native_pl,
-        data.trades[i].end_datetime
-      );
-    }
-  })
-  .catch((err) => console.error("error:" + err));
-
-//addItem(symbol,datetime,maxhigh,maxlow,qty,id)
+request(options, function (error, response, body) {
+  if (error) throw new Error(error);
+  postFills(body);
+});
